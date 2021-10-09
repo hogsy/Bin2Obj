@@ -22,6 +22,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+#include <cstring>
+#include <cmath>
+
 #include <iostream>
 #include <vector>
 
@@ -125,7 +128,7 @@ static void FileSeek(FILE* file, unsigned long numBytes, bool fromStart) {
 		return;
 	}
 
-	AbortApp("Failed to seek to %d!\n", numBytes);
+	AbortApp("Failed to seek to %lu!\n", numBytes);
 }
 
 #define CloseFile(FILE) if( (FILE) != nullptr ) fclose( (FILE) ); (FILE) = nullptr
@@ -154,11 +157,11 @@ int main(int argc, char** argv) {
 			break;
 		}
 		v *= env.scale;
-		if (isnan(v.x) || isnan(v.y) || isnan(v.z)) {
+		if (std::isnan(v.x) || std::isnan(v.y) || std::isnan(v.z)) {
 			Warn("Encountered NaN for vertex, ");
-			if (isnan(v.x)) { Print("X "); v.x = 0.0f; }
-			if (isnan(v.y)) { Print("Y "); v.y = 0.0f; }
-			if (isnan(v.z)) { Print("Z "); v.z = 0.0f; }
+			if (std::isnan(v.x)) { Print("X "); v.x = 0.0f; }
+			if (std::isnan(v.y)) { Print("Y "); v.y = 0.0f; }
+			if (std::isnan(v.z)) { Print("Z "); v.z = 0.0f; }
 			Print("- defaulting to 0.0!\n");
 		}
 		VPrint( "\tx( %f ) y( %f ) z( %f )\n", v.x, v.y, v.z );
