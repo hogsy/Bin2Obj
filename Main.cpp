@@ -44,12 +44,20 @@ static struct Environment {
 	unsigned long startOffset{ 0 };
 	unsigned long stride{ 0 };
 	unsigned long endOffset{ 0 };
-	
+
 	float scale{ 1.0f };
+    enum class VertexType {
+        F32,
+        I16,
+    } vertexType{ VertexType::F32 };
 
 	unsigned long faceStartOffset{ 0 };
 	unsigned long faceEndOffset{ 0 };
 	unsigned long faceStride{ 0 };
+    enum class FaceType {
+        I16,
+        I32,
+    } faceType{ FaceType::I32 };
 	std::vector<Face> meshFaces;
 
 	bool verbose{ false };
@@ -67,9 +75,11 @@ static void SetStartOffset(const char* argument) { env.startOffset = strtoul(arg
 static void SetEndOffset(const char* argument) { env.endOffset = strtoul(argument, nullptr, 10); }
 static void SetStride(const char* argument) { env.stride = strtoul(argument, nullptr, 10); }
 static void SetVertexScale(const char* argument) { env.scale = strtof(argument, nullptr); }
+static void SetVertexType( const char* argument) { env.vertexType = (Environment::VertexType)strtoul(argument, nullptr, 10); }
 static void SetFaceStartOffset(const char* argument) { env.faceStartOffset = strtoul(argument, nullptr, 10); }
 static void SetFaceEndOffset(const char* argument) { env.faceEndOffset = strtoul(argument, nullptr, 10); }
 static void SetFaceStride(const char* argument) { env.faceStride = strtoul(argument, nullptr, 10); }
+static void SetFaceType(const char* argument) { env.faceType = (Environment::FaceType)strtoul(argument, nullptr, 10); }
 static void SetVerboseMode(const char* argument) { env.verbose = true; }
 
 /**
@@ -88,9 +98,13 @@ static void ParseCommandLine(int argc, char** argv) {
 		{ "-stri", SetStride, "Number of bytes to proceed after reading XYZ." },
 		{ "-outp", SetOutPath, "Set the path for the output file." },
 		{ "-vtxs", SetVertexScale, "Scales the vertices by the defined amount." },
+        { "-vtyp", SetVertexType, "Sets how the vertex bytes are stored.\n"
+                                  "0 = float32 (default), 1 = int16" },
 		{ "-fsof", SetFaceStartOffset, "Sets the start offset to start loading face indices from." },
 		{ "-feof", SetFaceEndOffset, "Sets the end offset to finish loading face indices from." },
 		{ "-fstr", SetFaceStride, "Number of bytes to proceed after reading in face indices." },
+        { "-ftyp", SetFaceType, "Sets how the face bytes are stored.\n"
+                                "0 = int16, 1 = int32" },
 		{ "-verb", SetVerboseMode, "Enables more verbose output." },
 		{ nullptr }
 	};
@@ -152,10 +166,35 @@ int main(int argc, char** argv) {
 	FileSeek(file, env.startOffset, true);
 
 	while (feof(file) == 0) {
-		Vertex v;
-		if (fread(&v, sizeof(Vertex), 1, file) != 1) {
-			break;
-		}
+        Vertex v;
+        bool success = false;
+        switch( env.vertexType ) {
+            default: {
+                if (fread(&v, sizeof(Vertex), 1, file) != 1) {
+                    break;
+                }
+                success = true;
+                break;
+            }
+            case Environment::VertexType::I16: {
+                int16_t coords[3];
+                if (fread(coords, sizeof(int16_t), 3, file) != 3) {
+                    break;
+                }
+                // blergh...
+                v.x = (float) coords[0];
+                v.z = (float) coords[2];
+                v.y = (float) coords[1];
+                success = true;
+                break;
+            }
+        }
+
+        if ( !success ) {
+            Print("Failed to read in vertex at %lu\n", ftell(file));
+            break;
+        }
+
 		v *= env.scale;
 		if (std::isnan(v.x) || std::isnan(v.y) || std::isnan(v.z)) {
 			Warn("Encountered NaN for vertex, ");
@@ -169,7 +208,7 @@ int main(int argc, char** argv) {
 		if (env.endOffset > 0 && ftell(file) >= env.endOffset) {
 			break;
 		}
-		int r = fseek(file, env.stride, SEEK_CUR);
+		int r = fseek(file, ( long ) env.stride, SEEK_CUR);
 		if (env.stride > 0 && r != 0) {
 			break;
 		}
@@ -180,15 +219,45 @@ int main(int argc, char** argv) {
 	if( faceBytes > 0 ) {
 		Print("Attempting to read in faces...\n");
 		FileSeek( file, env.faceStartOffset, true );
+
+        unsigned int varSize;
+        switch( env.faceType ) {
+            default:
+                varSize = sizeof( uint32_t );
+                break;
+            case Environment::FaceType::I16:
+                varSize = sizeof( uint16_t );
+                break;
+        }
+
 		// Since we require both the start and end, we know how much data we want.
-		unsigned int numFaces = faceBytes / sizeof( Face );
+		unsigned int numFaces = faceBytes / ( varSize * 3 );
 		env.meshFaces.reserve( numFaces );
 		for( unsigned int i = 0; i < numFaces; ++i ) {
 			Face f;
-			if( fread( &f, sizeof( Face ), 1, file ) != 1 ) {
-				Warn( "Failed to load in all desired faces, keep in mind some faces may be missing or incorrect!\n" );
-				break;
-			}
+            switch ( env.faceType ) {
+                default:
+                    if( fread( &f, sizeof( Face ), 1, file ) != 1 ) {
+                        Warn( "Failed to load in all desired faces, keep in mind some faces may be missing or incorrect!\n" );
+                    }
+                    break;
+                case Environment::FaceType::I16:
+                    uint16_t x, y, z;
+                    if( fread( &x, sizeof( uint16_t ), 1, file ) != 1 ) {
+                        Warn( "Failed to load in all desired faces, keep in mind some faces may be missing or incorrect!\n" );
+                    }
+                    f.x = x;
+                    if( fread( &y, sizeof( uint16_t ), 1, file ) != 1 ) {
+                        Warn( "Failed to load in all desired faces, keep in mind some faces may be missing or incorrect!\n" );
+                    }
+                    f.y = y;
+                    if( fread( &z, sizeof( uint16_t ), 1, file ) != 1 ) {
+                        Warn( "Failed to load in all desired faces, keep in mind some faces may be missing or incorrect!\n" );
+                    }
+                    f.z = z;
+                    break;
+            }
+
 			VPrint( "\tx( %d ) y( %d ) z( %d )\n", f.x, f.y, f.z );
 			if( f.x >= env.meshVertices.size() || f.y >= env.meshVertices.size() || f.z >= env.meshVertices.size() ) {
 				Warn( "Encountered out of bound vertex index, " );
@@ -198,7 +267,7 @@ int main(int argc, char** argv) {
 				Print( "- defaulting to 0!\n" );
 			}
 			env.meshFaces.push_back(f);
-			int r = fseek( file, env.faceStride, SEEK_CUR );
+			int r = fseek( file, ( long ) env.faceStride, SEEK_CUR );
 			if( env.faceStride > 0 && r != 0 ) {
 				break;
 			}
@@ -213,7 +282,7 @@ int main(int argc, char** argv) {
 		fprintf(file, "v %f %f %f\n", vertex.x, vertex.y, vertex.z);
 	}
 	for( auto &face : env.meshFaces ) {
-		fprintf(file, "f %d %d %d\n", face.x, face.y, face.z);
+		fprintf(file, "f %d %d %d\n", face.x + 1, face.y + 1, face.z + 1);
 	}
 	CloseFile(file);
 
