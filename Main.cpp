@@ -35,7 +35,7 @@ struct Vertex {
 };
 
 struct Face {
-	unsigned int x{ 0 }, y{ 0 }, z{ 0 };
+	unsigned int x{ 0 }, y{ 0 }, z{ 0 }, w{ 0 };
 };
 
 static struct Environment {
@@ -58,6 +58,7 @@ static struct Environment {
         I16,
         I32,
     } faceType{ FaceType::I32 };
+    bool faceQuad{ false };
 	std::vector<Face> meshFaces;
 
 	bool verbose{ false };
@@ -80,6 +81,7 @@ static void SetFaceStartOffset(const char* argument) { env.faceStartOffset = str
 static void SetFaceEndOffset(const char* argument) { env.faceEndOffset = strtoul(argument, nullptr, 10); }
 static void SetFaceStride(const char* argument) { env.faceStride = strtoul(argument, nullptr, 10); }
 static void SetFaceType(const char* argument) { env.faceType = (Environment::FaceType)strtoul(argument, nullptr, 10); }
+static void SetFaceQuad(const char* argument) { env.faceQuad = true; }
 static void SetVerboseMode(const char* argument) { env.verbose = true; }
 
 /**
@@ -105,6 +107,7 @@ static void ParseCommandLine(int argc, char** argv) {
 		{ "-fstr", SetFaceStride, "Number of bytes to proceed after reading in face indices." },
         { "-ftyp", SetFaceType, "Sets how the face bytes are stored.\n"
                                 "0 = int16, 1 = int32" },
+        { "-fquad", SetFaceQuad, "Indicates that the faces are made up of four elements, a quad." },
 		{ "-verb", SetVerboseMode, "Enables more verbose output." },
 		{ nullptr }
 	};
@@ -231,41 +234,116 @@ int main(int argc, char** argv) {
         }
 
 		// Since we require both the start and end, we know how much data we want.
-		unsigned int numFaces = faceBytes / ( varSize * 3 );
+        unsigned int numFaces = faceBytes / (varSize * (env.faceQuad ? 4 : 3));
 		env.meshFaces.reserve( numFaces );
 		for( unsigned int i = 0; i < numFaces; ++i ) {
+            // Quick crap to deal with stride
+            long offset = ftell( file );
+            if ( offset > env.faceEndOffset )
+                break;
+
 			Face f;
             switch ( env.faceType ) {
-                default:
-                    if( fread( &f, sizeof( Face ), 1, file ) != 1 ) {
-                        Warn( "Failed to load in all desired faces, keep in mind some faces may be missing or incorrect!\n" );
+                default: {
+                    if ( env.faceQuad ) {
+                        if (fread(&f, sizeof(Face), 1, file) != 1 ) {
+                            Warn( "Failed to read in face (%u), some faces may be missing or incorrect!\n", i );
+                        }
+                    } else {
+                        uint32_t x, y, z;
+                        if (fread(&x, sizeof(uint32_t), 1, file) != 1) {
+                            Warn("Failed to load in face element x (%u), some faces may be missing or incorrect!\n",
+                                 i);
+                            break;
+                        }
+                        f.x = x;
+                        if (fread(&y, sizeof(uint32_t), 1, file) != 1) {
+                            Warn("Failed to load in face element y (%u), some faces may be missing or incorrect!\n",
+                                 i);
+                            break;
+                        }
+                        f.y = y;
+                        if (fread(&z, sizeof(uint32_t), 1, file) != 1) {
+                            Warn("Failed to load in face element z (%u), some faces may be missing or incorrect!\n",
+                                 i);
+                            break;
+                        }
+                        f.z = z;
                     }
                     break;
-                case Environment::FaceType::I16:
+                }
+                case Environment::FaceType::I16: {
                     uint16_t x, y, z;
-                    if( fread( &x, sizeof( uint16_t ), 1, file ) != 1 ) {
-                        Warn( "Failed to load in all desired faces, keep in mind some faces may be missing or incorrect!\n" );
+                    if (fread(&x, sizeof(uint16_t), 1, file) != 1) {
+                        Warn("Failed to load in face element x (%u), some faces may be missing or incorrect!\n", i );
+                        break;
                     }
                     f.x = x;
-                    if( fread( &y, sizeof( uint16_t ), 1, file ) != 1 ) {
-                        Warn( "Failed to load in all desired faces, keep in mind some faces may be missing or incorrect!\n" );
+                    if (fread(&y, sizeof(uint16_t), 1, file) != 1) {
+                        Warn("Failed to load in face element y (%u), some faces may be missing or incorrect!\n", i );
+                        break;
                     }
                     f.y = y;
-                    if( fread( &z, sizeof( uint16_t ), 1, file ) != 1 ) {
-                        Warn( "Failed to load in all desired faces, keep in mind some faces may be missing or incorrect!\n" );
+                    if (fread(&z, sizeof(uint16_t), 1, file) != 1) {
+                        Warn("Failed to load in face element z (%u), some faces may be missing or incorrect!\n", i );
+                        break;
                     }
                     f.z = z;
+                    if ( env.faceQuad ) {
+                        uint16_t w;
+                        if ( fread( &w, sizeof( uint16_t ), 1, file ) != 1 ) {
+                            Warn("Failed to load in face element x (%u), some faces may be missing or incorrect!\n", i );
+                            break;
+                        }
+                        f.w = w;
+                    }
                     break;
+                }
             }
 
-			VPrint( "\tx( %d ) y( %d ) z( %d )\n", f.x, f.y, f.z );
-			if( f.x >= env.meshVertices.size() || f.y >= env.meshVertices.size() || f.z >= env.meshVertices.size() ) {
-				Warn( "Encountered out of bound vertex index, " );
-				if( f.x >= env.meshVertices.size() ) { Print( "X " ); f.x = 0; }
-				if( f.y >= env.meshVertices.size() ) { Print( "Y " ); f.y = 0; }
-				if( f.z >= env.meshVertices.size() ) { Print( "Z " ); f.z = 0; }
-				Print( "- defaulting to 0!\n" );
-			}
+            if ( env.faceQuad ) {
+                VPrint("\tx( %u ) y( %u ) z( %u ) w( %u )\n", f.x, f.y, f.z, f.w);
+                if (f.x >= env.meshVertices.size() || f.y >= env.meshVertices.size() ||
+                    f.z >= env.meshVertices.size() || f.w >= env.meshVertices.size() ) {
+                    Warn("Encountered out of bound vertex index, ");
+                    if (f.x >= env.meshVertices.size()) {
+                        Print("X (%u)", f.x);
+                        f.x = 0;
+                    }
+                    if (f.y >= env.meshVertices.size()) {
+                        Print("Y (%u)", f.y);
+                        f.y = 0;
+                    }
+                    if (f.z >= env.meshVertices.size()) {
+                        Print("Z (%u)", f.z);
+                        f.z = 0;
+                    }
+                    if (f.z >= env.meshVertices.size()) {
+                        Print("W (%u)", f.w);
+                        f.w = 0;
+                    }
+                    Print("- defaulting to 0!\n");
+                }
+            } else {
+                VPrint("\tx( %d ) y( %d ) z( %d )\n", f.x, f.y, f.z);
+                if (f.x >= env.meshVertices.size() || f.y >= env.meshVertices.size() ||
+                    f.z >= env.meshVertices.size()) {
+                    Warn("Encountered out of bound vertex index, ");
+                    if (f.x >= env.meshVertices.size()) {
+                        Print("X (%u)", f.x);
+                        f.x = 0;
+                    }
+                    if (f.y >= env.meshVertices.size()) {
+                        Print("Y (%u)", f.y);
+                        f.y = 0;
+                    }
+                    if (f.z >= env.meshVertices.size()) {
+                        Print("Z (%u)", f.z);
+                        f.z = 0;
+                    }
+                    Print("- defaulting to 0!\n");
+                }
+            }
 			env.meshFaces.push_back(f);
 			int r = fseek( file, ( long ) env.faceStride, SEEK_CUR );
 			if( env.faceStride > 0 && r != 0 ) {
@@ -281,8 +359,29 @@ int main(int argc, char** argv) {
 	for (auto& vertex : env.meshVertices) {
 		fprintf(file, "v %f %f %f\n", vertex.x, vertex.y, vertex.z);
 	}
+
+    unsigned int numFaceElements = env.faceQuad ? 4 : 3;
 	for( auto &face : env.meshFaces ) {
-		fprintf(file, "f %d %d %d\n", face.x + 1, face.y + 1, face.z + 1);
+        auto *fv = (unsigned int *) &face;
+        bool invalid = false;
+        for (unsigned int i = 0; i < numFaceElements; ++i) {
+            for (unsigned int j = 0; j < numFaceElements; ++j) {
+                if (fv[i] == fv[j] && i != j) {
+                    VPrint("Invalid face indices found (%u %u %u)!\n", fv[0], fv[1], fv[2]);
+                    invalid = true;
+                    break;
+                }
+                if (invalid) break;
+            }
+        }
+
+        if (invalid)
+            continue;
+
+        fprintf(file, "f ");
+        for (unsigned int i = 0; i < numFaceElements; ++i) {
+            fprintf(file, i != (numFaceElements - 1) ? "%d " : "%d\n", fv[i] + 1);
+        }
 	}
 	CloseFile(file);
 
