@@ -24,6 +24,7 @@ SOFTWARE.
 
 #include <cstring>
 #include <cmath>
+#include <cstdint>
 
 #include <iostream>
 #include <vector>
